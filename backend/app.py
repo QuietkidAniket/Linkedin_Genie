@@ -1,15 +1,20 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 import uuid
 from typing import Optional, List, Dict, Any
 import logging
+import os
+from dotenv import load_dotenv
 
 from graph_builder import GraphBuilder
-from llm import LLMQueryParser
+from llm import GroqQueryParser
 from models import QueryRequest, GraphResponse, QueryResponse, UploadResponse, NodeResponse, MetricsResponse
 from storage import InMemoryStorage
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,13 +34,13 @@ app.add_middleware(
 # Global storage
 storage = InMemoryStorage()
 graph_builder = GraphBuilder()
-llm_parser = LLMQueryParser()
+llm_parser = GroqQueryParser()
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_csv(
     file: UploadFile = File(...),
-    mapping: Optional[str] = None,
-    settings: Optional[str] = None
+    mapping: str = Form(default="{}"),
+    settings: str = Form(default="{}")
 ):
     """Upload and process CSV file"""
     try:
@@ -72,7 +77,7 @@ async def upload_csv(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/graph", response_model=GraphResponse)
-async def get_graph(limit: int = 1000):
+async def get_graph(limit: Optional[int] = None):
     """Get the current graph data"""
     try:
         graph_data = storage.get_current_graph()
@@ -112,8 +117,8 @@ async def query_graph(request: QueryRequest):
         
         nodes, edges, metrics = graph_data
         
-        # Parse query using LLM
-        filter_json, explanation = llm_parser.parse_query(request.q)
+        # Parse query using Groq LLM
+        filter_json, explanation = await llm_parser.parse_query(request.q)
         
         # Apply filters
         filtered_nodes, filtered_edges = graph_builder.apply_filters(
@@ -175,6 +180,40 @@ async def get_metrics():
         
     except Exception as e:
         logger.error(f"Error getting metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/shortest-path/{source_id}/{target_id}")
+async def get_shortest_path(source_id: str, target_id: str):
+    """Get shortest path between two nodes"""
+    try:
+        graph_data = storage.get_current_graph()
+        if not graph_data:
+            raise HTTPException(status_code=404, detail="No graph data found")
+        
+        nodes, edges, _ = graph_data
+        path_data = graph_builder.find_shortest_path(nodes, edges, source_id, target_id)
+        
+        return {"path": path_data}
+        
+    except Exception as e:
+        logger.error(f"Error finding shortest path: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/subgraph/{node_id}")
+async def get_node_subgraph(node_id: str, depth: int = 1):
+    """Get subgraph around a specific node"""
+    try:
+        graph_data = storage.get_current_graph()
+        if not graph_data:
+            raise HTTPException(status_code=404, detail="No graph data found")
+        
+        nodes, edges, _ = graph_data
+        subgraph_data = graph_builder.get_node_subgraph(nodes, edges, node_id, depth)
+        
+        return {"subgraph": subgraph_data}
+        
+    except Exception as e:
+        logger.error(f"Error getting subgraph: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")

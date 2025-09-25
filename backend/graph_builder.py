@@ -7,6 +7,9 @@ from typing import Dict, List, Tuple, Any, Optional
 import logging
 import json
 from datetime import datetime
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,10 @@ class GraphBuilder:
             if node_data.get('position'):
                 node_data['position_tokens'] = self._extract_position_tokens(node_data['position'])
             
+            # Normalize location
+            if node_data.get('location'):
+                node_data['location_normalized'] = self._normalize_location(node_data['location'])
+            
             nodes.append({'data': node_data})
         
         return nodes
@@ -105,7 +112,7 @@ class GraphBuilder:
         normalized = company.lower().strip()
         
         # Remove common suffixes
-        suffixes = ['inc', 'inc.', 'llc', 'ltd', 'ltd.', 'corp', 'corp.', 'co', 'co.', 'pvt', 'pvt.']
+        suffixes = ['inc', 'inc.', 'llc', 'ltd', 'ltd.', 'corp', 'corp.', 'co', 'co.', 'pvt', 'pvt.', 'limited']
         for suffix in suffixes:
             if normalized.endswith(f' {suffix}'):
                 normalized = normalized[:-len(suffix)-1].strip()
@@ -113,7 +120,38 @@ class GraphBuilder:
         # Remove special characters
         normalized = re.sub(r'[^\w\s]', '', normalized)
         
-        return normalized
+        # Handle common company name variations
+        company_mappings = {
+            'google llc': 'google',
+            'microsoft corporation': 'microsoft',
+            'apple inc': 'apple',
+            'amazon com': 'amazon',
+            'meta platforms': 'meta',
+            'facebook inc': 'meta'
+        }
+        
+        return company_mappings.get(normalized, normalized)
+    
+    def _normalize_location(self, location: str) -> str:
+        """Normalize location for matching"""
+        if not location:
+            return ''
+        
+        normalized = location.lower().strip()
+        
+        # Handle common location variations
+        location_mappings = {
+            'sf': 'san francisco',
+            'bay area': 'san francisco',
+            'nyc': 'new york',
+            'new york city': 'new york',
+            'blr': 'bangalore',
+            'bengaluru': 'bangalore',
+            'mumbai': 'mumbai',
+            'bombay': 'mumbai'
+        }
+        
+        return location_mappings.get(normalized, normalized)
     
     def _extract_position_tokens(self, position: str) -> List[str]:
         """Extract meaningful tokens from position string"""
@@ -124,7 +162,7 @@ class GraphBuilder:
         tokens = re.findall(r'\b\w+\b', position.lower())
         
         # Filter out common words
-        stop_words = {'and', 'the', 'of', 'at', 'in', 'for', 'with', 'by', 'to', 'a', 'an'}
+        stop_words = {'and', 'the', 'of', 'at', 'in', 'for', 'with', 'by', 'to', 'a', 'an', 'is', 'are', 'was', 'were'}
         tokens = [token for token in tokens if len(token) > 2 and token not in stop_words]
         
         # Map common synonyms
@@ -133,7 +171,10 @@ class GraphBuilder:
             'dev': 'developer',
             'mgr': 'manager',
             'sr': 'senior',
-            'jr': 'junior'
+            'jr': 'junior',
+            'vp': 'vice president',
+            'cto': 'chief technology officer',
+            'ceo': 'chief executive officer'
         }
         
         tokens = [synonym_map.get(token, token) for token in tokens]
@@ -143,7 +184,7 @@ class GraphBuilder:
     def _infer_edges(self, nodes: List[Dict], settings: Dict) -> List[Dict]:
         """Infer edges between nodes based on shared attributes"""
         edges = []
-        weights = defaultdict(float)
+        weights = defaultdict(lambda: {'weight': 0, 'attributes': []})
         
         # Build indices for efficient lookup
         company_index = defaultdict(list)
@@ -166,10 +207,9 @@ class GraphBuilder:
                 school_index[school_normalized].append(node_id)
             
             # Location index
-            location = node['data'].get('location', '')
+            location = node['data'].get('location_normalized', '')
             if location:
-                location_normalized = location.lower().strip()
-                location_index[location_normalized].append(node_id)
+                location_index[location].append(node_id)
             
             # Position token index
             tokens = node['data'].get('position_tokens', [])
@@ -186,6 +226,9 @@ class GraphBuilder:
         if settings.get('fuzzy_matching', False):
             self._add_fuzzy_company_weights(nodes, weights, settings)
         
+        # Add semantic similarity for positions
+        self._add_semantic_position_weights(nodes, weights, settings)
+        
         # Create edges based on threshold
         threshold = settings['threshold']
         for (node_a, node_b), weight_info in weights.items():
@@ -194,7 +237,7 @@ class GraphBuilder:
                     'data': {
                         'source': node_a,
                         'target': node_b,
-                        'weight': weight_info['weight'],
+                        'weight': round(weight_info['weight'], 2),
                         'attributes': weight_info['attributes']
                     }
                 })
@@ -211,9 +254,6 @@ class GraphBuilder:
                 for j in range(i + 1, len(group)):
                     node_a, node_b = sorted([group[i], group[j]])
                     key = (node_a, node_b)
-                    
-                    if key not in weights:
-                        weights[key] = {'weight': 0, 'attributes': []}
                     
                     weights[key]['weight'] += weight
                     weights[key]['attributes'].append(attribute)
@@ -251,13 +291,50 @@ class GraphBuilder:
                         for node_b in nodes_b:
                             key = tuple(sorted([node_a, node_b]))
                             
-                            if key not in weights:
-                                weights[key] = {'weight': 0, 'attributes': []}
-                            
                             # Reduced weight for fuzzy matches
                             fuzzy_weight = settings['company_weight'] * (similarity / 100) * 0.8
                             weights[key]['weight'] += fuzzy_weight
                             weights[key]['attributes'].append('company_fuzzy')
+    
+    def _add_semantic_position_weights(self, nodes: List[Dict], weights: Dict, settings: Dict):
+        """Add weights for semantically similar positions using TF-IDF"""
+        try:
+            positions = []
+            node_positions = {}
+            
+            for node in nodes:
+                position = node['data'].get('position', '')
+                if position:
+                    positions.append(position)
+                    node_positions[node['data']['id']] = position
+            
+            if len(positions) < 2:
+                return
+            
+            # Create TF-IDF vectors
+            vectorizer = TfidfVectorizer(stop_words='english', max_features=100)
+            tfidf_matrix = vectorizer.fit_transform(positions)
+            
+            # Calculate cosine similarity
+            similarity_matrix = cosine_similarity(tfidf_matrix)
+            
+            # Add weights for similar positions
+            position_list = list(node_positions.items())
+            for i in range(len(position_list)):
+                for j in range(i + 1, len(position_list)):
+                    node_a_id, _ = position_list[i]
+                    node_b_id, _ = position_list[j]
+                    
+                    similarity = similarity_matrix[i][j]
+                    
+                    if similarity > 0.3:  # Threshold for semantic similarity
+                        key = tuple(sorted([node_a_id, node_b_id]))
+                        semantic_weight = settings['position_weight'] * similarity * 0.5
+                        weights[key]['weight'] += semantic_weight
+                        weights[key]['attributes'].append('position_semantic')
+                        
+        except Exception as e:
+            logger.warning(f"Semantic position matching failed: {e}")
     
     def _compute_metrics(self, nodes: List[Dict], edges: List[Dict]) -> Dict:
         """Compute network metrics"""
@@ -286,6 +363,13 @@ class GraphBuilder:
             # Compute centrality measures
             degree_centrality = nx.degree_centrality(G)
             betweenness_centrality = nx.betweenness_centrality(G)
+            eigenvector_centrality = {}
+            
+            try:
+                eigenvector_centrality = nx.eigenvector_centrality(G, max_iter=1000)
+            except:
+                # Fallback if eigenvector centrality fails
+                eigenvector_centrality = {node: 0 for node in G.nodes()}
             
             # Update node data with metrics
             for node in nodes:
@@ -293,6 +377,7 @@ class GraphBuilder:
                 node['data']['degree'] = G.degree(node_id) if node_id in G else 0
                 node['data']['betweenness'] = betweenness_centrality.get(node_id, 0)
                 node['data']['degree_centrality'] = degree_centrality.get(node_id, 0)
+                node['data']['eigenvector'] = eigenvector_centrality.get(node_id, 0)
             
             # Detect communities
             try:
@@ -319,6 +404,7 @@ class GraphBuilder:
             # Analyze companies and positions
             companies = Counter()
             positions = Counter()
+            locations = Counter()
             
             for node in nodes:
                 company = node['data'].get('company', '')
@@ -328,6 +414,10 @@ class GraphBuilder:
                 position_tokens = node['data'].get('position_tokens', [])
                 for token in position_tokens:
                     positions[token] += 1
+                
+                location = node['data'].get('location', '')
+                if location:
+                    locations[location] += 1
             
             # Top connectors and centrality leaders
             top_connectors = sorted(
@@ -344,16 +434,25 @@ class GraphBuilder:
                 reverse=True
             )[:10]
             
+            influence_leaders = sorted(
+                [{'id': node['data']['id'], 'name': node['data']['label'], 'eigenvector': node['data']['eigenvector']} 
+                 for node in nodes],
+                key=lambda x: x['eigenvector'],
+                reverse=True
+            )[:10]
+            
             return {
                 'total_nodes': total_nodes,
                 'total_edges': total_edges,
-                'avg_degree': avg_degree,
-                'density': density,
+                'avg_degree': round(avg_degree, 2),
+                'density': round(density, 4),
                 'communities': communities,
                 'top_companies': [{'name': name, 'count': count} for name, count in companies.most_common(20)],
                 'top_positions': [{'name': name, 'count': count} for name, count in positions.most_common(15)],
+                'top_locations': [{'name': name, 'count': count} for name, count in locations.most_common(15)],
                 'top_connectors': top_connectors,
-                'centrality_leaders': centrality_leaders
+                'centrality_leaders': centrality_leaders,
+                'influence_leaders': influence_leaders
             }
             
         except Exception as e:
@@ -366,8 +465,10 @@ class GraphBuilder:
                 'communities': 1,
                 'top_companies': [],
                 'top_positions': [],
+                'top_locations': [],
                 'top_connectors': [],
-                'centrality_leaders': []
+                'centrality_leaders': [],
+                'influence_leaders': []
             }
     
     def apply_filters(self, nodes: List[Dict], edges: List[Dict], filters: Dict) -> Tuple[List[Dict], List[Dict]]:
@@ -415,7 +516,12 @@ class GraphBuilder:
                 if not date_str:
                     return False
                 try:
-                    date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    # Handle various date formats
+                    if 'T' in date_str:
+                        date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    else:
+                        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                    
                     if date_from and date_obj < datetime.fromisoformat(date_from):
                         return False
                     if date_to and date_obj > datetime.fromisoformat(date_to):
@@ -437,3 +543,95 @@ class GraphBuilder:
         ]
         
         return filtered_nodes, filtered_edges
+    
+    def find_shortest_path(self, nodes: List[Dict], edges: List[Dict], source_id: str, target_id: str) -> Dict:
+        """Find shortest path between two nodes"""
+        try:
+            # Create NetworkX graph
+            G = nx.Graph()
+            
+            # Add nodes
+            for node in nodes:
+                G.add_node(node['data']['id'])
+            
+            # Add edges
+            for edge in edges:
+                G.add_edge(edge['data']['source'], edge['data']['target'])
+            
+            # Find shortest path
+            if source_id in G and target_id in G:
+                try:
+                    path = nx.shortest_path(G, source_id, target_id)
+                    path_length = len(path) - 1
+                    
+                    # Get path nodes and edges
+                    path_nodes = [node for node in nodes if node['data']['id'] in path]
+                    path_edges = []
+                    
+                    for i in range(len(path) - 1):
+                        for edge in edges:
+                            if ((edge['data']['source'] == path[i] and edge['data']['target'] == path[i+1]) or
+                                (edge['data']['source'] == path[i+1] and edge['data']['target'] == path[i])):
+                                path_edges.append(edge)
+                                break
+                    
+                    return {
+                        'exists': True,
+                        'length': path_length,
+                        'nodes': path_nodes,
+                        'edges': path_edges
+                    }
+                except nx.NetworkXNoPath:
+                    return {'exists': False, 'reason': 'No path exists'}
+            else:
+                return {'exists': False, 'reason': 'One or both nodes not found'}
+                
+        except Exception as e:
+            logger.error(f"Error finding shortest path: {e}")
+            return {'exists': False, 'reason': str(e)}
+    
+    def get_node_subgraph(self, nodes: List[Dict], edges: List[Dict], node_id: str, depth: int = 1) -> Dict:
+        """Get subgraph around a specific node"""
+        try:
+            # Create NetworkX graph
+            G = nx.Graph()
+            
+            # Add nodes
+            for node in nodes:
+                G.add_node(node['data']['id'])
+            
+            # Add edges
+            for edge in edges:
+                G.add_edge(edge['data']['source'], edge['data']['target'])
+            
+            if node_id not in G:
+                return {'nodes': [], 'edges': []}
+            
+            # Get nodes within specified depth
+            subgraph_nodes = set([node_id])
+            current_level = set([node_id])
+            
+            for _ in range(depth):
+                next_level = set()
+                for node in current_level:
+                    neighbors = set(G.neighbors(node))
+                    next_level.update(neighbors)
+                    subgraph_nodes.update(neighbors)
+                current_level = next_level - subgraph_nodes
+                subgraph_nodes.update(current_level)
+            
+            # Filter nodes and edges
+            filtered_nodes = [node for node in nodes if node['data']['id'] in subgraph_nodes]
+            filtered_edges = [
+                edge for edge in edges
+                if edge['data']['source'] in subgraph_nodes and edge['data']['target'] in subgraph_nodes
+            ]
+            
+            return {
+                'nodes': filtered_nodes,
+                'edges': filtered_edges
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting subgraph: {e}")
+            return {'nodes': [], 'edges': []}
