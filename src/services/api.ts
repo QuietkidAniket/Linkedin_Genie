@@ -37,6 +37,16 @@ export const getMetrics = async (): Promise<GraphMetrics> => {
   return response.data;
 };
 
+export const getShortestPath = async (sourceId: string, targetId: string) => {
+  const response = await api.get(`/shortest-path/${sourceId}/${targetId}`);
+  return response.data;
+};
+
+export const getNodeSubgraph = async (nodeId: string, depth: number = 1) => {
+  const response = await api.get(`/subgraph/${nodeId}?depth=${depth}`);
+  return response.data;
+};
+
 // Mock data for development
 export const mockGraphData: GraphData = {
   nodes: [

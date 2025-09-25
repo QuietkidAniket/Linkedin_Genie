@@ -20,6 +20,8 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showMetrics, setShowMetrics] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [pathHighlight, setPathHighlight] = useState<any>(null);
+  const [subgraphMode, setSubgraphMode] = useState(false);
 
   const handleGraphBuilt = useCallback((data: GraphData, metricsData: GraphMetrics) => {
     setGraphData(data);
@@ -187,9 +189,55 @@ function App() {
                   <NodeDetail
                     node={selectedNode}
                     graphData={filteredData}
+                    onShowPath={setPathHighlight}
+                    onShowSubgraph={(subgraph) => {
+                      setFilteredData(subgraph);
+                      setSubgraphMode(true);
+                    }}
                   />
                 </div>
               </div>
+
+              {/* Action Bar */}
+              {(pathHighlight || subgraphMode) && (
+                <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-center space-x-4">
+                    {pathHighlight && (
+                      <span className="text-blue-800 font-medium">
+                        Path highlighted: {pathHighlight.length} steps
+                      </span>
+                    )}
+                    {subgraphMode && (
+                      <span className="text-blue-800 font-medium">
+                        Showing subgraph view
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex space-x-2">
+                    {subgraphMode && (
+                      <button
+                        onClick={() => {
+                          setFilteredData(graphData);
+                          setSubgraphMode(false);
+                        }}
+                        className="btn-secondary text-sm"
+                      >
+                        Show Full Graph
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setPathHighlight(null);
+                        setSubgraphMode(false);
+                        setFilteredData(graphData);
+                      }}
+                      className="btn-secondary text-sm"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

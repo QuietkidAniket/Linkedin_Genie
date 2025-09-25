@@ -23,6 +23,8 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeSelect, selectedNode 
   const [layout, setLayout] = useState<string>('fcose');
   const [colorBy, setColorBy] = useState<'company' | 'community' | 'degree'>('company');
   const [isLoading, setIsLoading] = useState(false);
+  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [nodeSize, setNodeSize] = useState<'degree' | 'betweenness' | 'uniform'>('degree');
 
   // Color palettes
   const companyColors = [
@@ -57,8 +59,8 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeSelect, selectedNode 
           selector: 'node',
           style: {
             'background-color': (ele: any) => getNodeColor(ele.data(), colorBy),
-            'width': (ele: any) => Math.max(20, Math.min(60, (ele.data('degree') || 1) * 4)),
-            'height': (ele: any) => Math.max(20, Math.min(60, (ele.data('degree') || 1) * 4)),
+            'width': (ele: any) => getNodeSize(ele.data(), nodeSize),
+            'height': (ele: any) => getNodeSize(ele.data(), nodeSize),
             'label': 'data(label)',
             'font-size': '10px',
             'font-weight': 'bold',
@@ -95,7 +97,10 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeSelect, selectedNode 
             'target-arrow-color': '#cbd5e1',
             'target-arrow-shape': 'triangle',
             'curve-style': 'bezier',
-            'opacity': 0.6
+            'opacity': 0.6,
+            'label': showEdgeLabels ? (ele: any) => `${ele.data('weight')}` : '',
+            'font-size': '8px',
+            'text-rotation': 'autorotate'
           }
         },
         {
@@ -233,6 +238,27 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeSelect, selectedNode 
     }
   }, [selectedNode]);
 
+  const getNodeSize = (nodeData: any, sizeBy: string): number => {
+    const baseSize = 20;
+    const maxSize = 60;
+    
+    switch (sizeBy) {
+      case 'degree':
+        const degree = nodeData.degree || 1;
+        const maxDegree = Math.max(...data.nodes.map(n => n.data.degree || 1));
+        return Math.max(baseSize, Math.min(maxSize, baseSize + (degree / maxDegree) * (maxSize - baseSize)));
+      
+      case 'betweenness':
+        const betweenness = nodeData.betweenness || 0;
+        const maxBetweenness = Math.max(...data.nodes.map(n => n.data.betweenness || 0));
+        return Math.max(baseSize, Math.min(maxSize, baseSize + (betweenness / maxBetweenness) * (maxSize - baseSize)));
+      
+      case 'uniform':
+      default:
+        return baseSize;
+    }
+  };
+
   const getNodeColor = (nodeData: any, colorBy: string): string => {
     switch (colorBy) {
       case 'company':
@@ -318,6 +344,8 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeSelect, selectedNode 
               <option value="circle">Circle</option>
               <option value="grid">Grid</option>
               <option value="dagre">Hierarchical</option>
+              <option value="concentric">Concentric</option>
+              <option value="breadthfirst">Breadth First</option>
             </select>
           </div>
           <div className="flex items-center space-x-2">
@@ -331,6 +359,29 @@ const GraphView: React.FC<GraphViewProps> = ({ data, onNodeSelect, selectedNode 
               <option value="community">Community</option>
               <option value="degree">Connections</option>
             </select>
+          </div>
+          <div className="flex items-center space-x-2">
+            <label className="text-xs font-medium text-gray-700">Size by:</label>
+            <select
+              value={nodeSize}
+              onChange={(e) => setNodeSize(e.target.value as any)}
+              className="text-xs border border-gray-300 rounded px-2 py-1"
+            >
+              <option value="degree">Degree</option>
+              <option value="betweenness">Centrality</option>
+              <option value="uniform">Uniform</option>
+            </select>
+          </div>
+          <div className="flex items-center space-x-2">
+            <label className="text-xs font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={showEdgeLabels}
+                onChange={(e) => setShowEdgeLabels(e.target.checked)}
+                className="mr-1"
+              />
+              Edge Labels
+            </label>
           </div>
         </div>
       </div>

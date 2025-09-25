@@ -202,6 +202,31 @@ const MetricsPanel: React.FC<MetricsPanelProps> = ({ metrics, onClose }) => {
                 ))}
               </div>
             </div>
+
+            {/* Top Locations */}
+            {metrics.top_locations && metrics.top_locations.length > 0 && (
+              <div className="card">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+                  <MapPin className="w-5 h-5 text-gray-600" />
+                  <span>Top Locations</span>
+                </h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={metrics.top_locations.slice(0, 8)}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="name" 
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      fontSize={12}
+                    />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#10b981" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
           {/* Network Statistics */}

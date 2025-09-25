@@ -1,17 +1,23 @@
 import React, { useState } from 'react';
-import { User, Building, MapPin, Calendar, Mail, Eye, EyeOff, Network, TrendingUp } from 'lucide-react';
+import { User, Building, MapPin, Calendar, Mail, Eye, EyeOff, Network, TrendingUp, Route, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NodeData, GraphData } from '../types';
 import { format } from 'date-fns';
+import { getShortestPath, getNodeSubgraph } from '../services/api';
+import toast from 'react-hot-toast';
 
 interface NodeDetailProps {
   node: NodeData | null;
   graphData: GraphData | null;
+  onShowPath?: (pathData: any) => void;
+  onShowSubgraph?: (subgraphData: any) => void;
 }
 
-const NodeDetail: React.FC<NodeDetailProps> = ({ node, graphData }) => {
+const NodeDetail: React.FC<NodeDetailProps> = ({ node, graphData, onShowPath, onShowSubgraph }) => {
   const [showEmail, setShowEmail] = useState(false);
   const [showNeighbors, setShowNeighbors] = useState(false);
+  const [targetNodeId, setTargetNodeId] = useState('');
+  const [subgraphDepth, setSubgraphDepth] = useState(1);
 
   if (!node) {
     return (
@@ -52,6 +58,34 @@ const NodeDetail: React.FC<NodeDetailProps> = ({ node, graphData }) => {
     if (weight >= 3) return { label: 'Strong', color: 'text-blue-600', bg: 'bg-blue-100' };
     if (weight >= 2) return { label: 'Moderate', color: 'text-yellow-600', bg: 'bg-yellow-100' };
     return { label: 'Weak', color: 'text-gray-600', bg: 'bg-gray-100' };
+  };
+
+  const handleFindPath = async () => {
+    if (!targetNodeId || !node) return;
+    
+    try {
+      const pathData = await getShortestPath(node.id, targetNodeId);
+      if (pathData.path.exists) {
+        onShowPath?.(pathData.path);
+        toast.success(`Found path with ${pathData.path.length} steps`);
+      } else {
+        toast.error('No path found between these nodes');
+      }
+    } catch (error) {
+      toast.error('Failed to find path');
+    }
+  };
+
+  const handleShowSubgraph = async () => {
+    if (!node) return;
+    
+    try {
+      const subgraphData = await getNodeSubgraph(node.id, subgraphDepth);
+      onShowSubgraph?.(subgraphData.subgraph);
+      toast.success(`Showing ${subgraphDepth}-hop neighborhood`);
+    } catch (error) {
+      toast.error('Failed to get subgraph');
+    }
   };
 
   return (
@@ -197,6 +231,66 @@ const NodeDetail: React.FC<NodeDetailProps> = ({ node, graphData }) => {
           </AnimatePresence>
         </div>
       )}
+
+      {/* Path Finding */}
+      <div className="border-t border-gray-200 pt-4">
+        <h4 className="font-medium text-gray-900 mb-3 flex items-center space-x-2">
+          <Route className="w-4 h-4" />
+          <span>Find Path</span>
+        </h4>
+        <div className="space-y-2">
+          <select
+            value={targetNodeId}
+            onChange={(e) => setTargetNodeId(e.target.value)}
+            className="input-field text-sm"
+          >
+            <option value="">Select target node...</option>
+            {graphData?.nodes
+              .filter(n => n.data.id !== node?.id)
+              .slice(0, 50)
+              .map(n => (
+                <option key={n.data.id} value={n.data.id}>
+                  {n.data.label}
+                </option>
+              ))}
+          </select>
+          <button
+            onClick={handleFindPath}
+            disabled={!targetNodeId}
+            className="btn-primary text-sm w-full disabled:opacity-50"
+          >
+            Find Shortest Path
+          </button>
+        </div>
+      </div>
+
+      {/* Subgraph */}
+      <div className="border-t border-gray-200 pt-4">
+        <h4 className="font-medium text-gray-900 mb-3 flex items-center space-x-2">
+          <Users className="w-4 h-4" />
+          <span>Show Neighborhood</span>
+        </h4>
+        <div className="space-y-2">
+          <div className="flex items-center space-x-2">
+            <label className="text-sm text-gray-700">Depth:</label>
+            <select
+              value={subgraphDepth}
+              onChange={(e) => setSubgraphDepth(parseInt(e.target.value))}
+              className="input-field text-sm flex-1"
+            >
+              <option value={1}>1 hop</option>
+              <option value={2}>2 hops</option>
+              <option value={3}>3 hops</option>
+            </select>
+          </div>
+          <button
+            onClick={handleShowSubgraph}
+            className="btn-primary text-sm w-full"
+          >
+            Show Subgraph
+          </button>
+        </div>
+      </div>
     </motion.div>
   );
 };
