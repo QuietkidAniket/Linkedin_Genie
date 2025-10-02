@@ -81,19 +81,22 @@ async def get_graph(limit: Optional[int] = None):
     """Get the current graph data"""
     try:
         graph_data = storage.get_current_graph()
-        if not graph_data:
+        if not graph_data: 
             raise HTTPException(status_code=404, detail="No graph data found")
         
         nodes, edges, metrics = graph_data
         
-        # Limit nodes if requested
         if limit and len(nodes) > limit:
             nodes = nodes[:limit]
-            # Filter edges to only include those between remaining nodes
             node_ids = {node['data']['id'] for node in nodes}
             edges = [edge for edge in edges if 
                     edge['data']['source'] in node_ids and 
                     edge['data']['target'] in node_ids]
+        
+        # Apply cleaning to fix JSON serialization error
+        nodes = graph_builder._clean_for_json(nodes)
+        edges = graph_builder._clean_for_json(edges)
+        metrics = graph_builder._clean_for_json(metrics)
         
         return GraphResponse(
             graph={
@@ -106,6 +109,7 @@ async def get_graph(limit: Optional[int] = None):
     except Exception as e:
         logger.error(f"Error getting graph: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/query", response_model=QueryResponse)
 async def query_graph(request: QueryRequest):
@@ -201,7 +205,6 @@ async def get_shortest_path(source_id: str, target_id: str):
 
 @app.get("/subgraph/{node_id}")
 async def get_node_subgraph(node_id: str, depth: int = 1):
-    """Get subgraph around a specific node"""
     try:
         graph_data = storage.get_current_graph()
         if not graph_data:
@@ -209,8 +212,14 @@ async def get_node_subgraph(node_id: str, depth: int = 1):
         
         nodes, edges, _ = graph_data
         subgraph_data = graph_builder.get_node_subgraph(nodes, edges, node_id, depth)
+
+        # Clean the subgraph before returning
+        clean_subgraph = {
+            'nodes': graph_builder._clean_for_json(subgraph_data['nodes']),
+            'edges': graph_builder._clean_for_json(subgraph_data['edges'])
+        }
         
-        return {"subgraph": subgraph_data}
+        return {"subgraph": clean_subgraph}
         
     except Exception as e:
         logger.error(f"Error getting subgraph: {str(e)}")
