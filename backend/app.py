@@ -20,7 +20,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="LinkedIn Genie API", version="1.0.0")
+app = FastAPI(title="LinkedIn Genie API", version="2.0.0")
 
 # CORS middleware
 app.add_middleware(
@@ -186,44 +186,6 @@ async def get_metrics():
         logger.error(f"Error getting metrics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/shortest-path/{source_id}/{target_id}")
-async def get_shortest_path(source_id: str, target_id: str):
-    """Get shortest path between two nodes"""
-    try:
-        graph_data = storage.get_current_graph()
-        if not graph_data:
-            raise HTTPException(status_code=404, detail="No graph data found")
-        
-        nodes, edges, _ = graph_data
-        path_data = graph_builder.find_shortest_path(nodes, edges, source_id, target_id)
-        
-        return {"path": path_data}
-        
-    except Exception as e:
-        logger.error(f"Error finding shortest path: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/subgraph/{node_id}")
-async def get_node_subgraph(node_id: str, depth: int = 1):
-    try:
-        graph_data = storage.get_current_graph()
-        if not graph_data:
-            raise HTTPException(status_code=404, detail="No graph data found")
-        
-        nodes, edges, _ = graph_data
-        subgraph_data = graph_builder.get_node_subgraph(nodes, edges, node_id, depth)
-
-        # Clean the subgraph before returning
-        clean_subgraph = {
-            'nodes': graph_builder._clean_for_json(subgraph_data['nodes']),
-            'edges': graph_builder._clean_for_json(subgraph_data['edges'])
-        }
-        
-        return {"subgraph": clean_subgraph}
-        
-    except Exception as e:
-        logger.error(f"Error getting subgraph: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():

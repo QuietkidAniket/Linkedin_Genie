@@ -30,8 +30,8 @@ class GraphBuilder:
     def process_csv(self, csv_content: str, column_mapping: Dict, settings: Dict) -> Tuple[List[Dict], List[Dict], Dict]:
         """Process CSV content and build graph"""
         try:
-            # The LinkedIn CSV export has 2 header rows, we skip them.
-            df = pd.read_csv(StringIO(csv_content), header=2)
+            # CORRECTED LINE: Skip the first 3 rows of notes/blanks to find the header.
+            df = pd.read_csv(StringIO(csv_content), skiprows=3)
             logger.info(f"Loaded CSV with {len(df)} rows and columns: {df.columns.tolist()}")
 
             nodes = self._create_nodes(df, column_mapping)
@@ -342,96 +342,3 @@ class GraphBuilder:
         ]
         
         return filtered_nodes, filtered_edges
-    
-    def find_shortest_path(self, nodes: List[Dict], edges: List[Dict], source_id: str, target_id: str) -> Dict:
-        """Find shortest path between two nodes"""
-        try:
-            # Create NetworkX graph
-            G = nx.Graph()
-            
-            # Add nodes
-            for node in nodes:
-                G.add_node(node['data']['id'])
-            
-            # Add edges
-            for edge in edges:
-                G.add_edge(edge['data']['source'], edge['data']['target'])
-            
-            # Find shortest path
-            if source_id in G and target_id in G:
-                try:
-                    path = nx.shortest_path(G, source_id, target_id)
-                    path_length = len(path) - 1
-                    
-                    # Get path nodes and edges
-                    path_nodes = [node for node in nodes if node['data']['id'] in path]
-                    path_edges = []
-                    
-                    for i in range(len(path) - 1):
-                        for edge in edges:
-                            if ((edge['data']['source'] == path[i] and edge['data']['target'] == path[i+1]) or
-                                (edge['data']['source'] == path[i+1] and edge['data']['target'] == path[i])):
-                                path_edges.append(edge)
-                                break
-                    
-                    return {
-                        'exists': True,
-                        'length': path_length,
-                        'nodes': path_nodes,
-                        'edges': path_edges
-                    }
-                except nx.NetworkXNoPath:
-                    return {'exists': False, 'reason': 'No path exists'}
-            else:
-                return {'exists': False, 'reason': 'One or both nodes not found'}
-                
-        except Exception as e:
-            logger.error(f"Error finding shortest path: {e}")
-            return {'exists': False, 'reason': str(e)}
-    
-    def get_node_subgraph(self, nodes: List[Dict], edges: List[Dict], node_id: str, depth: int = 1) -> Dict:
-        """Get subgraph around a specific node"""
-        try:
-            # Create NetworkX graph
-            G = nx.Graph()
-            
-            # Add nodes
-            for node in nodes:
-                G.add_node(node['data']['id'])
-            
-            # Add edges
-            for edge in edges:
-                G.add_edge(edge['data']['source'], edge['data']['target'])
-            
-            if node_id not in G:
-                return {'nodes': [], 'edges': []}
-            
-            # Get nodes within specified depth
-            subgraph_nodes = set([node_id])
-            current_level = set([node_id])
-            
-            for _ in range(depth):
-                next_level = set()
-                for node in current_level:
-                    neighbors = set(G.neighbors(node))
-                    next_level.update(neighbors)
-                    subgraph_nodes.update(neighbors)
-                current_level = next_level - subgraph_nodes
-                subgraph_nodes.update(current_level)
-            
-            # Filter nodes and edges
-            filtered_nodes = [node for node in nodes if node['data']['id'] in subgraph_nodes]
-            filtered_edges = [
-                edge for edge in edges
-                if edge['data']['source'] in subgraph_nodes and edge['data']['target'] in subgraph_nodes
-            ]
-            
-            return {
-                'nodes': filtered_nodes,
-                'edges': filtered_edges
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting subgraph: {e}")
-            return {'nodes': [], 'edges': []}
-
